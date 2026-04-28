@@ -1,0 +1,16 @@
+services:
+  storycast:
+    build: .
+    container_name: storycast
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      DATA_DIR: /data
+      DEFAULT_VOICE: en-US-AriaNeural
+      MAX_UPLOAD_FILES: 100
+      MAX_TOTAL_CHARS: 1000000
+      MAX_CHARS_PER_CHUNK: 4500
+      MAX_CONCURRENT_JOBS: 1
+    restart: unless-stopped

@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>StoryCast</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="StoryCast home">
+        <span class="brand-mark">SC</span>
+        <span>
+          <strong>StoryCast</strong>
+          <small>Text-to-audio studio</small>
+        </span>
+      </a>
+      <nav class="top-actions" aria-label="App actions">
+        <button type="button" class="ghost" data-modal-open="help-modal">How it works</button>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Batch narration</p>
+        <h1>Turn text files into polished voice tracks.</h1>
+        <p class="subhead">Upload chapters, scenes, or scripts. StoryCast generates separate audio files, one combined story, or both.</p>
+      </div>
+      <aside class="hero-card" aria-label="What StoryCast creates">
+        <span class="status-dot"></span>
+        <div>
+          <strong>Designed for batches</strong>
+          <p>Each text file becomes a reusable audio segment, so exports stay flexible for editing and future video workflows.</p>
+        </div>
+      </aside>
+    </section>
+
+    <section class="workspace" aria-label="Narration workspace">
+      <form id="job-form" class="card composer">
+        <div class="card-header">
+          <div>
+            <p class="eyebrow">Create</p>
+            <h2>New narration</h2>
+            <p class="muted">Three steps: add files, choose the export, pick a voice.</p>
+          </div>
+          <span class="badge">Private by default</span>
+        </div>
+
+        <section class="step-panel" aria-labelledby="files-title">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <h3 id="files-title">Add your text</h3>
+            <p>Use multiple <code>.txt</code> files or a <code>.zip</code> containing text files. Files are read in filename order.</p>
+            <label class="drop-zone" for="files">
+              <input id="files" name="files" type="file" accept=".txt,.zip,text/plain,application/zip" multiple />
+              <span class="drop-icon">↥</span>
+              <span>
+                <strong>Choose files</strong>
+                <small>TXT or ZIP · up to 100 files by default</small>
+              </span>
+            </label>
+            <div id="file-list" class="file-list empty">No files selected yet.</div>
+          </div>
+        </section>
+
+        <section class="step-panel" aria-labelledby="output-title">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <h3 id="output-title">Choose the export</h3>
+            <p>Generate separate files for editing, one combined track for listening, or both.</p>
+            <div class="choice-grid" role="radiogroup" aria-label="Output mode">
+              <label class="choice-card">
+                <input type="radio" name="output_mode" value="both" checked />
+                <span>
+                  <strong>Both</strong>
+                  <small>Separate files and a combined story</small>
+                </span>
+              </label>
+              <label class="choice-card">
+                <input type="radio" name="output_mode" value="separate" />
+                <span>
+                  <strong>Separate files</strong>
+                  <small>Best for scenes and video editing</small>
+                </span>
+              </label>
+              <label class="choice-card">
+                <input type="radio" name="output_mode" value="combined" />
+                <span>
+                  <strong>Combined story</strong>
+                  <small>Best for one playable audio file</small>
+                </span>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <section class="step-panel" aria-labelledby="voice-title">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <div class="split-heading">
+              <div>
+                <h3 id="voice-title">Voice and timing</h3>
+                <p>Start with the default voice, or open the menus for finer control.</p>
+              </div>
+              <button type="button" class="secondary compact" data-modal-open="voice-modal">Tune voice</button>
+            </div>
+
+            <div class="settings-grid">
+              <label class="field">
+                <span>Voice</span>
+                <select name="voice" id="voice-select">
+                  <option value="en-US-AriaNeural">en-US-AriaNeural — balanced female</option>
+                  <option value="en-US-GuyNeural">en-US-GuyNeural — male</option>
+                  <option value="en-US-JennyNeural">en-US-JennyNeural — female</option>
+                  <option value="en-US-DavisNeural">en-US-DavisNeural — male</option>
+                </select>
+                <small id="voice-note">Loading voice list… fallback voices are already usable.</small>
+              </label>
+
+              <label class="field">
+                <span>Pause between files: <strong id="silence-label">1000 ms</strong></span>
+                <input name="silence_ms" id="silence" type="range" min="0" max="5000" step="250" value="1000" />
+              </label>
+            </div>
+
+            <div class="menu-row">
+              <button type="button" class="ghost" data-modal-open="advanced-modal">Advanced options</button>
+              <span id="job-summary" class="summary-chip">Both outputs · SRT on · normal voice</span>
+            </div>
+          </div>
+        </section>
+
+        <input id="rate" name="rate" type="hidden" value="+0%" />
+        <input id="pitch" name="pitch" type="hidden" value="+0Hz" />
+        <input id="volume" name="volume" type="hidden" value="+0%" />
+
+        <div class="submit-strip">
+          <div>
+            <strong>Ready to create audio?</strong>
+            <p class="muted">The job runs in the background and download links appear when finished.</p>
+          </div>
+          <button id="submit" type="submit">Create narration</button>
+        </div>
+      </form>
+
+      <aside class="card side-panel">
+        <div class="card-header compact-header">
+          <div>
+            <p class="eyebrow">Overview</p>
+            <h2>Current setup</h2>
+          </div>
+        </div>
+        <dl class="setup-list">
+          <div>
+            <dt>Files</dt>
+            <dd id="selected-files-summary">None selected</dd>
+          </div>
+          <div>
+            <dt>Export</dt>
+            <dd id="export-summary">Both outputs</dd>
+          </div>
+          <div>
+            <dt>Voice</dt>
+            <dd id="voice-summary">en-US-AriaNeural</dd>
+          </div>
+          <div>
+            <dt>Subtitles</dt>
+            <dd id="subtitle-summary">SRT enabled</dd>
+          </div>
+          <div>
+            <dt>Pause</dt>
+            <dd id="pause-summary">1000 ms</dd>
+          </div>
+        </dl>
+        <div class="tip-box">
+          <strong>Best practice</strong>
+          <p>Name files like <code>001_intro.txt</code>, <code>002_scene.txt</code>, and <code>003_ending.txt</code> to control story order.</p>
+        </div>
+      </aside>
+    </section>
+
+    <section id="status-card" class="card hidden">
+      <div class="card-header">
+        <div>
+          <p class="eyebrow">Progress</p>
+          <h2 id="job-title">Queued</h2>
+          <p id="job-stage" class="muted">Waiting to start…</p>
+        </div>
+        <code id="job-id"></code>
+      </div>
+      <div class="progress" aria-label="Job progress">
+        <div id="progress-bar"></div>
+      </div>
+      <div id="job-details" class="details"></div>
+      <div id="downloads" class="downloads"></div>
+      <div id="errors" class="errors"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <p class="eyebrow">History</p>
+          <h2>Recent jobs</h2>
+          <p class="muted">Open a recent job to download outputs again.</p>
+        </div>
+        <button id="refresh-jobs" type="button" class="secondary compact">Refresh</button>
+      </div>
+      <div id="recent-jobs" class="recent muted">No jobs loaded yet.</div>
+    </section>
+  </main>
+
+  <dialog id="voice-modal" class="modal" aria-labelledby="voice-modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Voice menu</p>
+          <h2 id="voice-modal-title">Fine-tune narration</h2>
+        </div>
+        <button type="button" class="icon-button" aria-label="Close voice menu" data-modal-close>×</button>
+      </div>
+      <div class="modal-body">
+        <label class="field">
+          <span>Speed: <strong id="rate-label">+0%</strong></span>
+          <input id="rate-range" type="range" min="-50" max="50" step="5" value="0" />
+          <small>Use a slower speed for dramatic narration and a faster speed for summaries.</small>
+        </label>
+        <label class="field">
+          <span>Pitch: <strong id="pitch-label">+0Hz</strong></span>
+          <input id="pitch-range" type="range" min="-100" max="100" step="10" value="0" />
+        </label>
+        <label class="field">
+          <span>Volume: <strong id="volume-label">+0%</strong></span>
+          <input id="volume-range" type="range" min="-50" max="50" step="5" value="0" />
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="secondary" data-modal-close>Done</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="advanced-modal" class="modal" aria-labelledby="advanced-modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Advanced menu</p>
+          <h2 id="advanced-modal-title">Output options</h2>
+        </div>
+        <button type="button" class="icon-button" aria-label="Close advanced options" data-modal-close>×</button>
+      </div>
+      <div class="modal-body">
+        <label class="switch-row">
+          <input id="generate-subtitles" name="generate_subtitles" type="checkbox" checked value="true" form="job-form" />
+          <span>
+            <strong>Generate SRT subtitles</strong>
+            <small>Create subtitles for each segment and for the combined story when available.</small>
+          </span>
+        </label>
+        <div class="note-card">
+          <strong>Caching is automatic</strong>
+          <p>Repeated text with the same voice, speed, pitch, and volume is reused instead of regenerated.</p>
+        </div>
+        <div class="note-card">
+          <strong>Long files are split safely</strong>
+          <p>Large text files are chunked before synthesis, then stitched back into the original file’s segment.</p>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="secondary" data-modal-close>Done</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="help-modal" class="modal" aria-labelledby="help-modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Guide</p>
+          <h2 id="help-modal-title">How StoryCast works</h2>
+        </div>
+        <button type="button" class="icon-button" aria-label="Close guide" data-modal-close>×</button>
+      </div>
+      <div class="modal-body help-steps">
+        <div>
+          <span class="step-number small">1</span>
+          <strong>Upload scripts or chapters</strong>
+          <p>Choose individual text files or a ZIP. StoryCast sorts files naturally by name.</p>
+        </div>
+        <div>
+          <span class="step-number small">2</span>
+          <strong>Pick the export style</strong>
+          <p>Separate files are best for editing. A combined file is best for sharing or listening.</p>
+        </div>
+        <div>
+          <span class="step-number small">3</span>
+          <strong>Download the finished audio</strong>
+          <p>When the job completes, download MP3 files, subtitles, ZIP bundles, and the manifest.</p>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="secondary" data-modal-close>Done</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

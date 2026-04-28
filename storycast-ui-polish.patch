@@ -1,0 +1,1765 @@
+diff --git a/README.md b/README.md
+index df7d112..e306ca0 100644
+--- a/README.md
++++ b/README.md
+@@ -1,29 +1,26 @@
+-# Story Narrator MVP
++# StoryCast
+ 
+-A small FastAPI web app that turns many `.txt` files into narrated audio.
++StoryCast is a lightweight web app for turning batches of text files into narrated audio.
+ 
+-It is built around this workflow:
++It is built around a simple production-friendly workflow:
+ 
+ 1. Upload one or more `.txt` files, or a `.zip` containing `.txt` files.
+-2. Each text file becomes one narration segment.
+-3. The app generates MP3 audio and optional SRT subtitles for each segment.
+-4. The app can export:
+-   - separate voice files,
+-   - one combined voice file,
+-   - or both.
++2. Each text file becomes one reusable narration segment.
++3. StoryCast generates MP3 audio and optional SRT subtitles for each segment.
++4. Export separate voice files, one combined story file, or both.
+ 
+-The MVP uses [`edge-tts`](https://github.com/rany2/edge-tts) as the text-to-speech engine because it is free to start with, has decent voices, and does not require an API key. It does require internet access from the container because the speech synthesis service is online.
++StoryCast uses [`edge-tts`](https://github.com/rany2/edge-tts) as the included text-to-speech provider because it is free to start with, has good voices, and does not require an API key. The container still needs internet access because speech synthesis happens through the online voice service.
+ 
+ ## What is included
+ 
+ ```text
+-story_narrator_mvp/
++storycast/
+   app/
+     main.py              FastAPI app and narration pipeline
+     static/
+-      index.html         Web UI
+-      styles.css         Web UI styling
+-      app.js             Browser-side form, polling, downloads
++      index.html         Customer-facing web UI
++      styles.css         Lightweight responsive styling
++      app.js             Browser-side form, menus, polling, downloads
+   sample_texts/          Two small test files
+   Dockerfile             Python + ffmpeg image
+   docker-compose.yml     Localhost deployment
+@@ -34,16 +31,17 @@ story_narrator_mvp/
+ 
+ ## Features
+ 
++- Clean browser UI with guided steps.
+ - Upload multiple `.txt` files at once.
+ - Upload a `.zip` containing `.txt` files.
+-- Natural filename sorting, so files like `001_intro.txt`, `002_scene.txt`, `010_finale.txt` stay in order.
++- Natural filename sorting, so files like `001_intro.txt`, `002_scene.txt`, and `010_finale.txt` stay in order.
+ - Generate separate MP3 files per uploaded text file.
+ - Generate one combined MP3 file.
+ - Generate SRT subtitles per file and for the combined story.
+ - Add configurable silence between files in the combined MP3.
+-- Cache generated chunks so repeated text with the same voice/speed/pitch does not get regenerated.
++- Tune voice speed, pitch, and volume from a lightweight voice menu.
++- Cache generated chunks so repeated text with the same voice/speed/pitch/volume does not get regenerated.
+ - Split long text files into smaller chunks before synthesis.
+-- Simple browser UI with job progress polling.
+ - Dockerized with ffmpeg included.
+ 
+ ## Run with Docker Compose
+@@ -75,8 +73,8 @@ After starting the app:
+ 
+ 1. Open `http://localhost:8080`.
+ 2. Upload the files in `sample_texts/`.
+-3. Keep output mode set to **Both**.
+-4. Click **Generate Narration**.
++3. Keep export set to **Both**.
++4. Click **Create narration**.
+ 5. Download the combined MP3, separate files ZIP, or all outputs ZIP.
+ 
+ ## Local Python development
+@@ -149,11 +147,11 @@ The app hashes this data for each text chunk:
+ provider + voice + rate + volume + pitch + text
+ ```
+ 
+-If the same chunk is generated again with the same settings, the app reuses the cached MP3/SRT instead of calling edge-tts again.
++If the same chunk is generated again with the same settings, StoryCast reuses the cached MP3/SRT instead of calling the TTS provider again.
+ 
+ ## Hosting notes
+ 
+-For private/local use, this is intentionally simple. Before exposing it publicly, add:
++For private hosting, put StoryCast behind normal web-app protections before sharing it outside your own network:
+ 
+ - login/authentication,
+ - request rate limiting,
+@@ -161,9 +159,9 @@ For private/local use, this is intentionally simple. Before exposing it publicly
+ - stricter upload size limits,
+ - HTTPS through a reverse proxy,
+ - monitoring/logging,
+-- and a clearer rights/commercial-use decision for generated audio.
++- and a clear rights/commercial-use decision for generated audio.
+ 
+-`edge-tts` is useful for prototypes, localhost tools, and private use. For a public or commercial app, consider swapping the provider layer to an official TTS API such as Azure Speech, Google Cloud Text-to-Speech, Amazon Polly, or another provider whose terms clearly fit your use case.
++`edge-tts` is useful for localhost tools and private use. For a public or commercial app, consider swapping the provider layer to an official TTS API such as Azure Speech, Google Cloud Text-to-Speech, Amazon Polly, or another provider whose terms clearly fit your use case.
+ 
+ ## Troubleshooting
+ 
+@@ -173,7 +171,7 @@ Use Docker, or install ffmpeg locally.
+ 
+ ### The voice list does not load
+ 
+-The UI falls back to a small built-in voice list. Full voice loading requires the container/server to reach the online edge-tts voice service.
++The UI falls back to a small built-in voice list. Full voice loading requires the container/server to reach the online voice service.
+ 
+ ### A job fails with “No audio was received”
+ 
+@@ -185,4 +183,4 @@ Combined output uses ffmpeg. Check that ffmpeg is installed and that the per-fil
+ 
+ ## Development notes
+ 
+-The TTS logic is intentionally isolated around `synthesize_chunk_with_edge_tts()` and `synthesize_chunk_cached()` in `app/main.py`. To add another provider later, replace or wrap those functions and include the provider name in the cache key.
++The TTS logic is isolated around `synthesize_chunk_with_edge_tts()` and `synthesize_chunk_cached()` in `app/main.py`. To add another provider later, replace or wrap those functions and include the provider name in the cache key.
+diff --git a/app/main.py b/app/main.py
+index cebb8f3..ace73dc 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -36,7 +36,7 @@ DEFAULT_VOICE = os.environ.get("DEFAULT_VOICE", "en-US-AriaNeural")
+ for directory in (DATA_DIR, JOBS_DIR, CACHE_DIR):
+     directory.mkdir(parents=True, exist_ok=True)
+ 
+-app = FastAPI(title="Story Narrator", version="0.1.0")
++app = FastAPI(title="StoryCast", version="0.2.0")
+ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+ 
+ _job_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+diff --git a/app/static/app.js b/app/static/app.js
+index 12491de..2f7e5f1 100644
+--- a/app/static/app.js
++++ b/app/static/app.js
+@@ -14,6 +14,16 @@ const recentJobs = document.querySelector('#recent-jobs');
+ 
+ const voiceSelect = document.querySelector('#voice-select');
+ const voiceNote = document.querySelector('#voice-note');
++const silence = document.querySelector('#silence');
++const silenceLabel = document.querySelector('#silence-label');
++const subtitlesInput = document.querySelector('#generate-subtitles');
++
++const selectedFilesSummary = document.querySelector('#selected-files-summary');
++const exportSummary = document.querySelector('#export-summary');
++const voiceSummary = document.querySelector('#voice-summary');
++const subtitleSummary = document.querySelector('#subtitle-summary');
++const pauseSummary = document.querySelector('#pause-summary');
++const jobSummary = document.querySelector('#job-summary');
+ 
+ const ranges = [
+   { range: '#rate-range', hidden: '#rate', label: '#rate-label', suffix: '%' },
+@@ -28,36 +38,6 @@ function signedValue(value, suffix) {
+   return `${number >= 0 ? '+' : ''}${number}${suffix}`;
+ }
+ 
+-for (const item of ranges) {
+-  const range = document.querySelector(item.range);
+-  const hidden = document.querySelector(item.hidden);
+-  const label = document.querySelector(item.label);
+-  const update = () => {
+-    const value = signedValue(range.value, item.suffix);
+-    hidden.value = value;
+-    label.textContent = value;
+-  };
+-  range.addEventListener('input', update);
+-  update();
+-}
+-
+-const silence = document.querySelector('#silence');
+-const silenceLabel = document.querySelector('#silence-label');
+-silence.addEventListener('input', () => {
+-  silenceLabel.textContent = `${silence.value} ms`;
+-});
+-
+-filesInput.addEventListener('change', () => {
+-  const files = [...filesInput.files];
+-  if (!files.length) {
+-    fileList.textContent = 'No files selected yet.';
+-    return;
+-  }
+-  fileList.innerHTML = files
+-    .map((file, index) => `<div class="file-row"><span>${index + 1}. ${escapeHtml(file.name)}</span><span>${formatBytes(file.size)}</span></div>`)
+-    .join('');
+-});
+-
+ function escapeHtml(value) {
+   return String(value).replace(/[&<>'"]/g, char => ({
+     '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+@@ -78,28 +58,147 @@ function formatDuration(ms) {
+   return minutes ? `${minutes}m ${rest}s` : `${rest}s`;
+ }
+ 
++function getOutputMode() {
++  return form.querySelector('input[name="output_mode"]:checked')?.value || 'both';
++}
++
++function getOutputModeLabel(mode = getOutputMode()) {
++  return {
++    both: 'Both outputs',
++    separate: 'Separate files',
++    combined: 'Combined story',
++  }[mode] || 'Both outputs';
++}
++
++function getTuningSummary() {
++  const rate = document.querySelector('#rate')?.value || '+0%';
++  const pitch = document.querySelector('#pitch')?.value || '+0Hz';
++  const volume = document.querySelector('#volume')?.value || '+0%';
++  const changes = [];
++
++  if (rate !== '+0%') changes.push(`speed ${rate}`);
++  if (pitch !== '+0Hz') changes.push(`pitch ${pitch}`);
++  if (volume !== '+0%') changes.push(`volume ${volume}`);
++
++  return changes.length ? changes.join(', ') : 'normal voice';
++}
++
++function updateSummary() {
++  const files = [...filesInput.files];
++  const outputMode = getOutputMode();
++  const subtitlesEnabled = subtitlesInput?.checked !== false;
++  const selectedVoice = voiceSelect?.value || 'Default voice';
++  const pauseText = `${silence.value} ms`;
++
++  selectedFilesSummary.textContent = files.length
++    ? `${files.length} file${files.length === 1 ? '' : 's'} selected`
++    : 'None selected';
++  exportSummary.textContent = getOutputModeLabel(outputMode);
++  voiceSummary.textContent = selectedVoice;
++  subtitleSummary.textContent = subtitlesEnabled ? 'SRT enabled' : 'SRT disabled';
++  pauseSummary.textContent = pauseText;
++  silenceLabel.textContent = pauseText;
++  jobSummary.textContent = `${getOutputModeLabel(outputMode)} · ${subtitlesEnabled ? 'SRT on' : 'SRT off'} · ${getTuningSummary()}`;
++}
++
++function renderFileList() {
++  const files = [...filesInput.files];
++  if (!files.length) {
++    fileList.className = 'file-list empty';
++    fileList.textContent = 'No files selected yet.';
++    updateSummary();
++    return;
++  }
++
++  const previewLimit = 12;
++  const rows = files.slice(0, previewLimit).map((file, index) => `
++    <div class="file-row">
++      <span>${index + 1}. ${escapeHtml(file.name)}</span>
++      <span>${formatBytes(file.size)}</span>
++    </div>
++  `);
++
++  if (files.length > previewLimit) {
++    rows.push(`
++      <div class="file-row">
++        <span>+ ${files.length - previewLimit} more file${files.length - previewLimit === 1 ? '' : 's'}</span>
++        <span>${formatBytes(files.reduce((sum, file) => sum + file.size, 0))} total</span>
++      </div>
++    `);
++  }
++
++  fileList.className = 'file-list';
++  fileList.innerHTML = rows.join('');
++  updateSummary();
++}
++
++function setupRanges() {
++  for (const item of ranges) {
++    const range = document.querySelector(item.range);
++    const hidden = document.querySelector(item.hidden);
++    const label = document.querySelector(item.label);
++    const update = () => {
++      const value = signedValue(range.value, item.suffix);
++      hidden.value = value;
++      label.textContent = value;
++      updateSummary();
++    };
++    range.addEventListener('input', update);
++    update();
++  }
++}
++
++function setupModals() {
++  for (const opener of document.querySelectorAll('[data-modal-open]')) {
++    opener.addEventListener('click', () => {
++      const modal = document.querySelector(`#${opener.dataset.modalOpen}`);
++      if (!modal) return;
++      if (typeof modal.showModal === 'function') {
++        modal.showModal();
++      } else {
++        modal.setAttribute('open', '');
++      }
++    });
++  }
++
++  for (const modal of document.querySelectorAll('dialog.modal')) {
++    modal.addEventListener('click', event => {
++      if (event.target === modal) modal.close();
++    });
++
++    for (const closeButton of modal.querySelectorAll('[data-modal-close]')) {
++      closeButton.addEventListener('click', () => modal.close());
++    }
++  }
++}
++
+ async function loadVoices() {
+   try {
+     const response = await fetch('/api/voices');
+     const data = await response.json();
+     const current = voiceSelect.value;
+     voiceSelect.innerHTML = '';
++
+     for (const voice of data.voices) {
+       const option = document.createElement('option');
+       option.value = voice.short_name;
+       option.textContent = `${voice.short_name} — ${voice.gender || 'voice'}${voice.locale ? `, ${voice.locale}` : ''}`;
+       voiceSelect.appendChild(option);
+     }
++
+     if ([...voiceSelect.options].some(option => option.value === current)) {
+       voiceSelect.value = current;
+     } else if ([...voiceSelect.options].some(option => option.value === 'en-US-AriaNeural')) {
+       voiceSelect.value = 'en-US-AriaNeural';
+     }
++
+     voiceNote.textContent = data.source === 'edge-tts'
+-      ? `Loaded ${data.voices.length} voices from edge-tts.`
+-      : 'Using fallback voice list. The full list loads when edge-tts can reach the voice service.';
++      ? `Loaded ${data.voices.length} voices.`
++      : 'Using fallback voices. The full list loads when the voice service is reachable.';
+   } catch (error) {
+     voiceNote.textContent = `Could not load voices: ${error.message}`;
++  } finally {
++    updateSummary();
+   }
+ }
+ 
+@@ -111,12 +210,17 @@ async function refreshRecentJobs() {
+       recentJobs.textContent = 'No jobs yet.';
+       return;
+     }
++
+     recentJobs.innerHTML = data.jobs.map(job => `
+       <div class="job-row">
+-        <span><strong>${escapeHtml(job.status)}</strong> · ${escapeHtml(job.stage || '')}</span>
++        <span>
++          <strong>${escapeHtml(job.status)}</strong>
++          <small>${escapeHtml(job.stage || '')}</small>
++        </span>
+         <span><a href="#" data-job="${job.id}">${job.progress ?? 0}% · ${job.file_count ?? 0} files</a></span>
+       </div>
+     `).join('');
++
+     for (const link of recentJobs.querySelectorAll('[data-job]')) {
+       link.addEventListener('click', event => {
+         event.preventDefault();
+@@ -129,29 +233,41 @@ async function refreshRecentJobs() {
+   }
+ }
+ 
+-form.addEventListener('submit', async event => {
++async function createJob(event) {
+   event.preventDefault();
++
++  if (!filesInput.files.length) {
++    downloads.innerHTML = "";
++    errors.textContent = 'Choose at least one .txt file or a .zip containing text files first.';
++    statusCard.classList.remove('hidden');
++    statusCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
++    return;
++  }
++
+   submitButton.disabled = true;
+-  submitButton.textContent = 'Creating job…';
++  submitButton.textContent = 'Creating…';
+   downloads.innerHTML = '';
+   errors.textContent = '';
+ 
+   try {
+     const formData = new FormData(form);
+     if (!formData.has('generate_subtitles')) formData.append('generate_subtitles', 'false');
++
+     const response = await fetch('/api/jobs', { method: 'POST', body: formData });
+     const data = await response.json();
+     if (!response.ok) throw new Error(data.detail || 'Could not create job');
+ 
+     statusCard.classList.remove('hidden');
++    statusCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+     startPolling(data.id);
+   } catch (error) {
+     errors.textContent = error.message;
++    statusCard.classList.remove('hidden');
+   } finally {
+     submitButton.disabled = false;
+-    submitButton.textContent = 'Generate Narration';
++    submitButton.textContent = 'Create narration';
+   }
+-});
++}
+ 
+ function startPolling(jobId) {
+   if (pollTimer) clearInterval(pollTimer);
+@@ -199,11 +315,11 @@ function renderJob(job) {
+ 
+   if (job.links && Object.keys(job.links).length) {
+     const labels = {
+-      combined_mp3: 'Download combined MP3',
+-      combined_srt: 'Download combined SRT',
+-      separate_zip: 'Download separate files ZIP',
+-      all_outputs_zip: 'Download all outputs ZIP',
+-      manifest: 'Download manifest JSON'
++      combined_mp3: 'Combined MP3',
++      combined_srt: 'Combined SRT',
++      separate_zip: 'Separate files ZIP',
++      all_outputs_zip: 'All outputs ZIP',
++      manifest: 'Manifest JSON'
+     };
+     downloads.innerHTML = Object.entries(job.links)
+       .map(([key, url]) => `<a class="button-link" href="${url}">${labels[key] || key}</a>`)
+@@ -215,7 +331,18 @@ function renderJob(job) {
+   errors.textContent = (job.errors || []).join('\n');
+ }
+ 
++filesInput.addEventListener('change', renderFileList);
++silence.addEventListener('input', updateSummary);
++voiceSelect.addEventListener('change', updateSummary);
++subtitlesInput.addEventListener('change', updateSummary);
++form.addEventListener('change', event => {
++  if (event.target.matches('input[name="output_mode"]')) updateSummary();
++});
++form.addEventListener('submit', createJob);
+ document.querySelector('#refresh-jobs').addEventListener('click', refreshRecentJobs);
+ 
++setupModals();
++setupRanges();
++updateSummary();
+ loadVoices();
+ refreshRecentJobs();
+diff --git a/app/static/index.html b/app/static/index.html
+index e04ee63..d828d73 100644
+--- a/app/static/index.html
++++ b/app/static/index.html
+@@ -3,97 +3,193 @@
+ <head>
+   <meta charset="utf-8" />
+   <meta name="viewport" content="width=device-width, initial-scale=1" />
+-  <title>Story Narrator</title>
++  <title>StoryCast</title>
+   <link rel="stylesheet" href="/static/styles.css" />
+ </head>
+ <body>
+   <main class="shell">
+-    <header class="hero">
+-      <div>
+-        <p class="eyebrow">Batch text-to-speech</p>
+-        <h1>Story Narrator</h1>
+-        <p class="subhead">Upload many text files, generate separate voice files, one combined voice file, or both.</p>
+-      </div>
+-      <div class="pill">edge-tts MVP</div>
++    <header class="topbar">
++      <a class="brand" href="/" aria-label="StoryCast home">
++        <span class="brand-mark">SC</span>
++        <span>
++          <strong>StoryCast</strong>
++          <small>Text-to-audio studio</small>
++        </span>
++      </a>
++      <nav class="top-actions" aria-label="App actions">
++        <button type="button" class="ghost" data-modal-open="help-modal">How it works</button>
++      </nav>
+     </header>
+ 
+-    <section class="card">
+-      <form id="job-form">
+-        <div class="grid two">
+-          <label class="field full">
+-            <span>Text files</span>
+-            <input id="files" name="files" type="file" accept=".txt,.zip,text/plain,application/zip" multiple required />
+-            <small>Select many <code>.txt</code> files, or upload a <code>.zip</code> containing text files.</small>
+-          </label>
+-
+-          <div id="file-list" class="file-list full muted">No files selected yet.</div>
+-
+-          <label class="field full">
+-            <span>Output mode</span>
+-            <select name="output_mode" id="output-mode">
+-              <option value="both" selected>Both: separate files + combined file</option>
+-              <option value="separate">Separate voice files only</option>
+-              <option value="combined">One combined voice file only</option>
+-            </select>
+-          </label>
+-
+-          <label class="field">
+-            <span>Voice</span>
+-            <select name="voice" id="voice-select">
+-              <option value="en-US-AriaNeural">en-US-AriaNeural — balanced female</option>
+-              <option value="en-US-GuyNeural">en-US-GuyNeural — male</option>
+-              <option value="en-US-JennyNeural">en-US-JennyNeural — female</option>
+-              <option value="en-US-DavisNeural">en-US-DavisNeural — male</option>
+-            </select>
+-            <small id="voice-note">Loading online voice list… fallback voices are already usable.</small>
+-          </label>
+-
+-          <label class="field">
+-            <span>Silence between files: <strong id="silence-label">1000 ms</strong></span>
+-            <input name="silence_ms" id="silence" type="range" min="0" max="5000" step="250" value="1000" />
+-          </label>
+-
+-          <label class="field">
+-            <span>Speed: <strong id="rate-label">+0%</strong></span>
+-            <input id="rate-range" type="range" min="-50" max="50" step="5" value="0" />
+-            <input id="rate" name="rate" type="hidden" value="+0%" />
+-          </label>
+-
+-          <label class="field">
+-            <span>Pitch: <strong id="pitch-label">+0Hz</strong></span>
+-            <input id="pitch-range" type="range" min="-100" max="100" step="10" value="0" />
+-            <input id="pitch" name="pitch" type="hidden" value="+0Hz" />
+-          </label>
+-
+-          <label class="field">
+-            <span>Volume: <strong id="volume-label">+0%</strong></span>
+-            <input id="volume-range" type="range" min="-50" max="50" step="5" value="0" />
+-            <input id="volume" name="volume" type="hidden" value="+0%" />
+-          </label>
+-
+-          <label class="checkbox field">
+-            <input name="generate_subtitles" type="checkbox" checked value="true" />
+-            <span>Generate SRT subtitles</span>
+-          </label>
++    <section class="hero">
++      <div class="hero-copy">
++        <p class="eyebrow">Batch narration</p>
++        <h1>Turn text files into polished voice tracks.</h1>
++        <p class="subhead">Upload chapters, scenes, or scripts. StoryCast generates separate audio files, one combined story, or both.</p>
++      </div>
++      <aside class="hero-card" aria-label="What StoryCast creates">
++        <span class="status-dot"></span>
++        <div>
++          <strong>Designed for batches</strong>
++          <p>Each text file becomes a reusable audio segment, so exports stay flexible for editing and future video workflows.</p>
+         </div>
++      </aside>
++    </section>
++
++    <section class="workspace" aria-label="Narration workspace">
++      <form id="job-form" class="card composer">
++        <div class="card-header">
++          <div>
++            <p class="eyebrow">Create</p>
++            <h2>New narration</h2>
++            <p class="muted">Three steps: add files, choose the export, pick a voice.</p>
++          </div>
++          <span class="badge">Private by default</span>
++        </div>
++
++        <section class="step-panel" aria-labelledby="files-title">
++          <div class="step-number">1</div>
++          <div class="step-content">
++            <h3 id="files-title">Add your text</h3>
++            <p>Use multiple <code>.txt</code> files or a <code>.zip</code> containing text files. Files are read in filename order.</p>
++            <label class="drop-zone" for="files">
++              <input id="files" name="files" type="file" accept=".txt,.zip,text/plain,application/zip" multiple />
++              <span class="drop-icon">↥</span>
++              <span>
++                <strong>Choose files</strong>
++                <small>TXT or ZIP · up to 100 files by default</small>
++              </span>
++            </label>
++            <div id="file-list" class="file-list empty">No files selected yet.</div>
++          </div>
++        </section>
++
++        <section class="step-panel" aria-labelledby="output-title">
++          <div class="step-number">2</div>
++          <div class="step-content">
++            <h3 id="output-title">Choose the export</h3>
++            <p>Generate separate files for editing, one combined track for listening, or both.</p>
++            <div class="choice-grid" role="radiogroup" aria-label="Output mode">
++              <label class="choice-card">
++                <input type="radio" name="output_mode" value="both" checked />
++                <span>
++                  <strong>Both</strong>
++                  <small>Separate files and a combined story</small>
++                </span>
++              </label>
++              <label class="choice-card">
++                <input type="radio" name="output_mode" value="separate" />
++                <span>
++                  <strong>Separate files</strong>
++                  <small>Best for scenes and video editing</small>
++                </span>
++              </label>
++              <label class="choice-card">
++                <input type="radio" name="output_mode" value="combined" />
++                <span>
++                  <strong>Combined story</strong>
++                  <small>Best for one playable audio file</small>
++                </span>
++              </label>
++            </div>
++          </div>
++        </section>
++
++        <section class="step-panel" aria-labelledby="voice-title">
++          <div class="step-number">3</div>
++          <div class="step-content">
++            <div class="split-heading">
++              <div>
++                <h3 id="voice-title">Voice and timing</h3>
++                <p>Start with the default voice, or open the menus for finer control.</p>
++              </div>
++              <button type="button" class="secondary compact" data-modal-open="voice-modal">Tune voice</button>
++            </div>
++
++            <div class="settings-grid">
++              <label class="field">
++                <span>Voice</span>
++                <select name="voice" id="voice-select">
++                  <option value="en-US-AriaNeural">en-US-AriaNeural — balanced female</option>
++                  <option value="en-US-GuyNeural">en-US-GuyNeural — male</option>
++                  <option value="en-US-JennyNeural">en-US-JennyNeural — female</option>
++                  <option value="en-US-DavisNeural">en-US-DavisNeural — male</option>
++                </select>
++                <small id="voice-note">Loading voice list… fallback voices are already usable.</small>
++              </label>
+ 
+-        <div class="actions">
+-          <button id="submit" type="submit">Generate Narration</button>
+-          <button id="refresh-jobs" type="button" class="secondary">Refresh recent jobs</button>
++              <label class="field">
++                <span>Pause between files: <strong id="silence-label">1000 ms</strong></span>
++                <input name="silence_ms" id="silence" type="range" min="0" max="5000" step="250" value="1000" />
++              </label>
++            </div>
++
++            <div class="menu-row">
++              <button type="button" class="ghost" data-modal-open="advanced-modal">Advanced options</button>
++              <span id="job-summary" class="summary-chip">Both outputs · SRT on · normal voice</span>
++            </div>
++          </div>
++        </section>
++
++        <input id="rate" name="rate" type="hidden" value="+0%" />
++        <input id="pitch" name="pitch" type="hidden" value="+0Hz" />
++        <input id="volume" name="volume" type="hidden" value="+0%" />
++
++        <div class="submit-strip">
++          <div>
++            <strong>Ready to create audio?</strong>
++            <p class="muted">The job runs in the background and download links appear when finished.</p>
++          </div>
++          <button id="submit" type="submit">Create narration</button>
+         </div>
+       </form>
++
++      <aside class="card side-panel">
++        <div class="card-header compact-header">
++          <div>
++            <p class="eyebrow">Overview</p>
++            <h2>Current setup</h2>
++          </div>
++        </div>
++        <dl class="setup-list">
++          <div>
++            <dt>Files</dt>
++            <dd id="selected-files-summary">None selected</dd>
++          </div>
++          <div>
++            <dt>Export</dt>
++            <dd id="export-summary">Both outputs</dd>
++          </div>
++          <div>
++            <dt>Voice</dt>
++            <dd id="voice-summary">en-US-AriaNeural</dd>
++          </div>
++          <div>
++            <dt>Subtitles</dt>
++            <dd id="subtitle-summary">SRT enabled</dd>
++          </div>
++          <div>
++            <dt>Pause</dt>
++            <dd id="pause-summary">1000 ms</dd>
++          </div>
++        </dl>
++        <div class="tip-box">
++          <strong>Best practice</strong>
++          <p>Name files like <code>001_intro.txt</code>, <code>002_scene.txt</code>, and <code>003_ending.txt</code> to control story order.</p>
++        </div>
++      </aside>
+     </section>
+ 
+     <section id="status-card" class="card hidden">
+-      <div class="status-head">
++      <div class="card-header">
+         <div>
+-          <p class="eyebrow">Current job</p>
++          <p class="eyebrow">Progress</p>
+           <h2 id="job-title">Queued</h2>
+           <p id="job-stage" class="muted">Waiting to start…</p>
+         </div>
+         <code id="job-id"></code>
+       </div>
+-      <div class="progress">
++      <div class="progress" aria-label="Job progress">
+         <div id="progress-bar"></div>
+       </div>
+       <div id="job-details" class="details"></div>
+@@ -102,16 +198,112 @@
+     </section>
+ 
+     <section class="card">
+-      <div class="status-head">
++      <div class="card-header">
+         <div>
+           <p class="eyebrow">History</p>
+           <h2>Recent jobs</h2>
++          <p class="muted">Open a recent job to download outputs again.</p>
+         </div>
++        <button id="refresh-jobs" type="button" class="secondary compact">Refresh</button>
+       </div>
+       <div id="recent-jobs" class="recent muted">No jobs loaded yet.</div>
+     </section>
+   </main>
+ 
++  <dialog id="voice-modal" class="modal" aria-labelledby="voice-modal-title">
++    <div class="modal-card">
++      <div class="modal-header">
++        <div>
++          <p class="eyebrow">Voice menu</p>
++          <h2 id="voice-modal-title">Fine-tune narration</h2>
++        </div>
++        <button type="button" class="icon-button" aria-label="Close voice menu" data-modal-close>×</button>
++      </div>
++      <div class="modal-body">
++        <label class="field">
++          <span>Speed: <strong id="rate-label">+0%</strong></span>
++          <input id="rate-range" type="range" min="-50" max="50" step="5" value="0" />
++          <small>Use a slower speed for dramatic narration and a faster speed for summaries.</small>
++        </label>
++        <label class="field">
++          <span>Pitch: <strong id="pitch-label">+0Hz</strong></span>
++          <input id="pitch-range" type="range" min="-100" max="100" step="10" value="0" />
++        </label>
++        <label class="field">
++          <span>Volume: <strong id="volume-label">+0%</strong></span>
++          <input id="volume-range" type="range" min="-50" max="50" step="5" value="0" />
++        </label>
++      </div>
++      <div class="modal-actions">
++        <button type="button" class="secondary" data-modal-close>Done</button>
++      </div>
++    </div>
++  </dialog>
++
++  <dialog id="advanced-modal" class="modal" aria-labelledby="advanced-modal-title">
++    <div class="modal-card">
++      <div class="modal-header">
++        <div>
++          <p class="eyebrow">Advanced menu</p>
++          <h2 id="advanced-modal-title">Output options</h2>
++        </div>
++        <button type="button" class="icon-button" aria-label="Close advanced options" data-modal-close>×</button>
++      </div>
++      <div class="modal-body">
++        <label class="switch-row">
++          <input id="generate-subtitles" name="generate_subtitles" type="checkbox" checked value="true" form="job-form" />
++          <span>
++            <strong>Generate SRT subtitles</strong>
++            <small>Create subtitles for each segment and for the combined story when available.</small>
++          </span>
++        </label>
++        <div class="note-card">
++          <strong>Caching is automatic</strong>
++          <p>Repeated text with the same voice, speed, pitch, and volume is reused instead of regenerated.</p>
++        </div>
++        <div class="note-card">
++          <strong>Long files are split safely</strong>
++          <p>Large text files are chunked before synthesis, then stitched back into the original file’s segment.</p>
++        </div>
++      </div>
++      <div class="modal-actions">
++        <button type="button" class="secondary" data-modal-close>Done</button>
++      </div>
++    </div>
++  </dialog>
++
++  <dialog id="help-modal" class="modal" aria-labelledby="help-modal-title">
++    <div class="modal-card">
++      <div class="modal-header">
++        <div>
++          <p class="eyebrow">Guide</p>
++          <h2 id="help-modal-title">How StoryCast works</h2>
++        </div>
++        <button type="button" class="icon-button" aria-label="Close guide" data-modal-close>×</button>
++      </div>
++      <div class="modal-body help-steps">
++        <div>
++          <span class="step-number small">1</span>
++          <strong>Upload scripts or chapters</strong>
++          <p>Choose individual text files or a ZIP. StoryCast sorts files naturally by name.</p>
++        </div>
++        <div>
++          <span class="step-number small">2</span>
++          <strong>Pick the export style</strong>
++          <p>Separate files are best for editing. A combined file is best for sharing or listening.</p>
++        </div>
++        <div>
++          <span class="step-number small">3</span>
++          <strong>Download the finished audio</strong>
++          <p>When the job completes, download MP3 files, subtitles, ZIP bundles, and the manifest.</p>
++        </div>
++      </div>
++      <div class="modal-actions">
++        <button type="button" class="secondary" data-modal-close>Done</button>
++      </div>
++    </div>
++  </dialog>
++
+   <script src="/static/app.js"></script>
+ </body>
+ </html>
+diff --git a/app/static/styles.css b/app/static/styles.css
+index c80d03e..44f805b 100644
+--- a/app/static/styles.css
++++ b/app/static/styles.css
+@@ -1,193 +1,821 @@
+ :root {
+-  color-scheme: light dark;
+-  --bg: #0f172a;
+-  --panel: #111827;
+-  --panel-2: #1f2937;
+-  --text: #f8fafc;
+-  --muted: #94a3b8;
+-  --border: #334155;
+-  --accent: #60a5fa;
+-  --accent-2: #93c5fd;
+-  --danger: #fca5a5;
+-  --ok: #86efac;
++  color-scheme: light;
++  --bg: #f6f7fb;
++  --surface: #ffffff;
++  --surface-soft: #f9fafb;
++  --text: #172033;
++  --muted: #667085;
++  --border: #dde3ee;
++  --border-strong: #c8d1df;
++  --accent: #3157d5;
++  --accent-dark: #233ea3;
++  --accent-soft: #eaf0ff;
++  --success: #12b76a;
++  --danger: #b42318;
++  --warning: #f79009;
++  --shadow: 0 18px 50px rgba(27, 39, 68, 0.10);
++  --radius: 18px;
+ }
+ 
+ * { box-sizing: border-box; }
+ 
++html { scroll-behavior: smooth; }
++
+ body {
+   margin: 0;
++  min-height: 100vh;
+   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+-  background: radial-gradient(circle at top left, rgba(96,165,250,0.18), transparent 34rem), var(--bg);
+   color: var(--text);
+-  min-height: 100vh;
++  background:
++    radial-gradient(circle at top left, rgba(49, 87, 213, 0.12), transparent 28rem),
++    linear-gradient(180deg, #ffffff 0%, var(--bg) 28rem);
++}
++
++button,
++input,
++select {
++  font: inherit;
++}
++
++button,
++.button-link {
++  appearance: none;
++  border: 0;
++  border-radius: 12px;
++  background: var(--accent);
++  color: #ffffff;
++  cursor: pointer;
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
++  gap: 0.4rem;
++  font-weight: 800;
++  line-height: 1;
++  min-height: 2.75rem;
++  padding: 0.8rem 1.05rem;
++  text-decoration: none;
++  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
++}
++
++button:hover,
++.button-link:hover {
++  background: var(--accent-dark);
++  box-shadow: 0 8px 22px rgba(49, 87, 213, 0.24);
++  transform: translateY(-1px);
++}
++
++button:disabled {
++  cursor: not-allowed;
++  opacity: 0.58;
++  transform: none;
++  box-shadow: none;
++}
++
++button.secondary,
++.secondary {
++  background: #ffffff;
++  border: 1px solid var(--border-strong);
++  color: var(--text);
++}
++
++button.secondary:hover,
++.secondary:hover {
++  background: var(--surface-soft);
++  box-shadow: 0 8px 22px rgba(27, 39, 68, 0.08);
++}
++
++button.ghost,
++.ghost {
++  background: transparent;
++  border: 1px solid var(--border);
++  color: var(--text);
++}
++
++button.ghost:hover,
++.ghost:hover {
++  background: var(--accent-soft);
++  border-color: #b9c7ff;
++  box-shadow: none;
++}
++
++button.compact,
++.compact {
++  min-height: 2.25rem;
++  padding: 0.55rem 0.75rem;
+ }
+ 
+ .shell {
+-  width: min(1120px, calc(100vw - 2rem));
++  width: min(1180px, calc(100vw - 2rem));
+   margin: 0 auto;
+-  padding: 2rem 0 4rem;
++  padding: 1.25rem 0 4rem;
+ }
+ 
+-.hero, .status-head {
++.topbar,
++.hero,
++.card-header,
++.split-heading,
++.submit-strip,
++.menu-row,
++.file-row,
++.job-row,
++.modal-header,
++.modal-actions {
+   display: flex;
++  align-items: center;
++}
++
++.topbar {
+   justify-content: space-between;
+   gap: 1rem;
++  margin-bottom: 2.25rem;
++}
++
++.brand {
++  align-items: center;
++  color: inherit;
++  display: inline-flex;
++  gap: 0.75rem;
++  text-decoration: none;
++}
++
++.brand-mark {
++  align-items: center;
++  background: var(--accent);
++  border-radius: 14px;
++  color: #ffffff;
++  display: inline-flex;
++  font-weight: 900;
++  height: 2.8rem;
++  justify-content: center;
++  letter-spacing: -0.04em;
++  width: 2.8rem;
++}
++
++.brand strong,
++.brand small {
++  display: block;
++}
++
++.brand strong {
++  font-size: 1.05rem;
++}
++
++.brand small {
++  color: var(--muted);
++  font-size: 0.78rem;
++  margin-top: 0.1rem;
++}
++
++.top-actions {
++  display: flex;
++  gap: 0.6rem;
++}
++
++.hero {
++  align-items: stretch;
++  gap: 1rem;
++  justify-content: space-between;
++  margin-bottom: 1.25rem;
++}
++
++.hero-copy {
++  flex: 1;
++  max-width: 780px;
++}
++
++.hero-card {
+   align-items: flex-start;
++  background: rgba(255, 255, 255, 0.72);
++  border: 1px solid var(--border);
++  border-radius: var(--radius);
++  box-shadow: var(--shadow);
++  display: flex;
++  gap: 0.75rem;
++  max-width: 350px;
++  padding: 1rem;
++}
++
++.hero-card p,
++.hero-card strong {
++  margin: 0;
++}
++
++.hero-card p {
++  color: var(--muted);
++  font-size: 0.92rem;
++  margin-top: 0.35rem;
++}
++
++.status-dot {
++  background: var(--success);
++  border-radius: 999px;
++  box-shadow: 0 0 0 7px rgba(18, 183, 106, 0.12);
++  flex: 0 0 auto;
++  height: 0.7rem;
++  margin-top: 0.25rem;
++  width: 0.7rem;
++}
++
++h1,
++h2,
++h3,
++p,
++dl,
++dd {
++  margin-top: 0;
++}
++
++h1 {
++  font-size: clamp(2.4rem, 6vw, 4.9rem);
++  letter-spacing: -0.07em;
++  line-height: 0.95;
++  margin-bottom: 0.8rem;
++}
++
++h2 {
++  font-size: clamp(1.35rem, 2vw, 1.75rem);
++  letter-spacing: -0.035em;
++  margin-bottom: 0.3rem;
+ }
+ 
+-.hero { margin-bottom: 1.25rem; }
++h3 {
++  font-size: 1.05rem;
++  margin-bottom: 0.3rem;
++}
+ 
+-h1, h2, p { margin-top: 0; }
+-h1 { font-size: clamp(2rem, 4vw, 4rem); margin-bottom: .25rem; }
+-h2 { margin-bottom: .25rem; }
++.subhead {
++  color: var(--muted);
++  font-size: clamp(1rem, 2vw, 1.2rem);
++  line-height: 1.55;
++  max-width: 46rem;
++}
+ 
+-.subhead { color: var(--muted); max-width: 46rem; font-size: 1.05rem; }
+-.eyebrow { color: var(--accent-2); text-transform: uppercase; font-size: .78rem; letter-spacing: .12em; margin-bottom: .3rem; font-weight: 800; }
+-.muted { color: var(--muted); }
++.eyebrow {
++  color: var(--accent);
++  font-size: 0.76rem;
++  font-weight: 900;
++  letter-spacing: 0.12em;
++  margin-bottom: 0.35rem;
++  text-transform: uppercase;
++}
++
++.muted,
++.field small,
++.choice-card small,
++.switch-row small {
++  color: var(--muted);
++}
+ 
+ .card {
+-  background: linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.025));
++  background: rgba(255, 255, 255, 0.9);
+   border: 1px solid var(--border);
+-  border-radius: 1.2rem;
+-  padding: 1.25rem;
+-  box-shadow: 0 24px 60px rgba(0,0,0,.24);
++  border-radius: var(--radius);
++  box-shadow: var(--shadow);
+   margin-bottom: 1rem;
++  padding: 1.25rem;
+ }
+ 
+-.pill {
+-  padding: .45rem .7rem;
+-  border: 1px solid var(--border);
++.card-header {
++  align-items: flex-start;
++  gap: 1rem;
++  justify-content: space-between;
++  margin-bottom: 1.1rem;
++}
++
++.card-header p:last-child,
++.submit-strip p,
++.step-content p,
++.note-card p,
++.help-steps p {
++  margin-bottom: 0;
++}
++
++.badge,
++.summary-chip {
++  background: var(--accent-soft);
++  border: 1px solid #cad6ff;
+   border-radius: 999px;
+-  color: var(--accent-2);
+-  background: rgba(96,165,250,.12);
++  color: var(--accent-dark);
++  display: inline-flex;
++  font-size: 0.82rem;
++  font-weight: 800;
++  padding: 0.45rem 0.7rem;
+   white-space: nowrap;
+ }
+ 
+-.grid { display: grid; gap: 1rem; }
+-.grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+-.full { grid-column: 1 / -1; }
++.workspace {
++  align-items: start;
++  display: grid;
++  gap: 1rem;
++  grid-template-columns: minmax(0, 1fr) 330px;
++}
+ 
+-.field {
+-  display: flex;
+-  flex-direction: column;
+-  gap: .45rem;
++.composer {
++  padding: 0;
++  overflow: hidden;
+ }
+ 
+-.field span { font-weight: 700; }
+-.field small { color: var(--muted); }
++.composer > .card-header,
++.composer > .submit-strip {
++  padding: 1.25rem;
++}
+ 
+-input[type="file"], select, input[type="range"] {
+-  width: 100%;
++.step-panel {
++  border-top: 1px solid var(--border);
++  display: grid;
++  gap: 1rem;
++  grid-template-columns: 2.35rem minmax(0, 1fr);
++  padding: 1.25rem;
+ }
+ 
+-input[type="file"], select {
+-  border: 1px solid var(--border);
+-  background: rgba(15,23,42,.7);
+-  color: var(--text);
+-  border-radius: .75rem;
+-  padding: .75rem;
++.step-number {
++  align-items: center;
++  background: var(--accent-soft);
++  border: 1px solid #cad6ff;
++  border-radius: 999px;
++  color: var(--accent-dark);
++  display: inline-flex;
++  font-weight: 900;
++  height: 2.25rem;
++  justify-content: center;
++  width: 2.25rem;
+ }
+ 
+-input[type="range"] { accent-color: var(--accent); }
++.step-number.small {
++  height: 1.9rem;
++  margin-bottom: 0.55rem;
++  width: 1.9rem;
++}
+ 
+-.checkbox {
+-  flex-direction: row;
+-  align-items: center;
+-  gap: .7rem;
++.step-content > p {
++  color: var(--muted);
++  line-height: 1.5;
++  margin-bottom: 0.9rem;
+ }
+-.checkbox input { width: 1.1rem; height: 1.1rem; }
+ 
+-.actions {
++.drop-zone {
++  align-items: center;
++  background: var(--surface-soft);
++  border: 1.5px dashed var(--border-strong);
++  border-radius: 16px;
++  cursor: pointer;
+   display: flex;
+-  gap: .75rem;
+-  flex-wrap: wrap;
+-  margin-top: 1.25rem;
++  gap: 0.85rem;
++  padding: 1rem;
++  transition: background 0.15s ease, border-color 0.15s ease;
+ }
+ 
+-button, .button-link {
+-  appearance: none;
+-  border: 0;
+-  background: var(--accent);
+-  color: #06111f;
+-  border-radius: .8rem;
+-  padding: .78rem 1rem;
+-  font-weight: 800;
+-  cursor: pointer;
+-  text-decoration: none;
+-  display: inline-flex;
++.drop-zone:hover {
++  background: var(--accent-soft);
++  border-color: #9ab0ff;
++}
++
++.drop-zone input {
++  display: none;
++}
++
++.drop-icon {
+   align-items: center;
+-  gap: .35rem;
++  background: #ffffff;
++  border: 1px solid var(--border);
++  border-radius: 14px;
++  color: var(--accent);
++  display: inline-flex;
++  flex: 0 0 auto;
++  font-size: 1.35rem;
++  font-weight: 900;
++  height: 2.8rem;
++  justify-content: center;
++  width: 2.8rem;
+ }
+ 
+-button.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+-button:disabled { opacity: .55; cursor: not-allowed; }
++.drop-zone strong,
++.drop-zone small {
++  display: block;
++}
++
++.drop-zone small {
++  margin-top: 0.2rem;
++}
+ 
+ .file-list {
+-  border: 1px dashed var(--border);
+-  border-radius: .75rem;
+-  padding: .75rem;
+-  max-height: 11rem;
++  background: #ffffff;
++  border: 1px solid var(--border);
++  border-radius: 14px;
++  color: var(--muted);
++  margin-top: 0.8rem;
++  max-height: 13rem;
+   overflow: auto;
+-  background: rgba(15,23,42,.45);
++  padding: 0.35rem 0.85rem;
++}
++
++.file-list.empty {
++  padding: 0.85rem;
+ }
+ 
+-.file-row, .job-row {
++.file-row,
++.job-row {
++  gap: 1rem;
++  justify-content: space-between;
++  padding: 0.65rem 0;
++}
++
++.file-row + .file-row,
++.job-row + .job-row {
++  border-top: 1px solid rgba(102, 112, 133, 0.14);
++}
++
++.file-row span:first-child,
++.job-row span:first-child {
++  min-width: 0;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.choice-grid {
++  display: grid;
++  gap: 0.7rem;
++  grid-template-columns: repeat(3, minmax(0, 1fr));
++}
++
++.choice-card {
++  align-items: flex-start;
++  background: #ffffff;
++  border: 1px solid var(--border);
++  border-radius: 16px;
++  cursor: pointer;
+   display: flex;
++  gap: 0.65rem;
++  padding: 0.9rem;
++  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
++}
++
++.choice-card:has(input:checked) {
++  background: var(--accent-soft);
++  border-color: #9ab0ff;
++  box-shadow: inset 0 0 0 1px #9ab0ff;
++}
++
++.choice-card input {
++  accent-color: var(--accent);
++  flex: 0 0 auto;
++  margin-top: 0.2rem;
++}
++
++.choice-card strong,
++.choice-card small {
++  display: block;
++}
++
++.choice-card small {
++  line-height: 1.35;
++  margin-top: 0.25rem;
++}
++
++.split-heading {
++  align-items: flex-start;
++  gap: 1rem;
+   justify-content: space-between;
++  margin-bottom: 1rem;
++}
++
++.settings-grid {
++  display: grid;
++  gap: 0.9rem;
++  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
++}
++
++.field {
++  display: flex;
++  flex-direction: column;
++  gap: 0.45rem;
++}
++
++.field span {
++  font-weight: 800;
++}
++
++select,
++input[type="range"] {
++  width: 100%;
++}
++
++select {
++  background: #ffffff;
++  border: 1px solid var(--border-strong);
++  border-radius: 12px;
++  color: var(--text);
++  min-height: 2.75rem;
++  padding: 0.65rem 0.75rem;
++}
++
++input[type="range"] {
++  accent-color: var(--accent);
++}
++
++.menu-row {
++  flex-wrap: wrap;
++  gap: 0.7rem;
++  justify-content: space-between;
++  margin-top: 1rem;
++}
++
++.submit-strip {
++  align-items: center;
++  background: var(--surface-soft);
++  border-top: 1px solid var(--border);
+   gap: 1rem;
+-  padding: .35rem 0;
+-  border-bottom: 1px solid rgba(148,163,184,.14);
++  justify-content: space-between;
++}
++
++.side-panel {
++  position: sticky;
++  top: 1rem;
++}
++
++.compact-header {
++  margin-bottom: 0.8rem;
++}
++
++.setup-list {
++  display: grid;
++  gap: 0.75rem;
++  margin-bottom: 1rem;
++}
++
++.setup-list div {
++  background: var(--surface-soft);
++  border: 1px solid var(--border);
++  border-radius: 14px;
++  padding: 0.75rem;
++}
++
++.setup-list dt {
++  color: var(--muted);
++  font-size: 0.76rem;
++  font-weight: 900;
++  letter-spacing: 0.08em;
++  margin-bottom: 0.25rem;
++  text-transform: uppercase;
++}
++
++.setup-list dd {
++  font-weight: 800;
++  margin-bottom: 0;
++  overflow-wrap: anywhere;
++}
++
++.tip-box,
++.note-card {
++  background: #fffaf0;
++  border: 1px solid #fedf89;
++  border-radius: 14px;
++  padding: 0.85rem;
++}
++
++.tip-box p,
++.note-card p {
++  color: var(--muted);
++  line-height: 1.45;
++  margin-bottom: 0;
++  margin-top: 0.35rem;
+ }
+-.file-row:last-child, .job-row:last-child { border-bottom: 0; }
+ 
+ .progress {
+-  width: 100%;
+-  height: .8rem;
+-  background: rgba(148,163,184,.18);
++  background: #edf1f7;
+   border-radius: 999px;
+-  overflow: hidden;
++  height: 0.85rem;
+   margin: 1rem 0;
++  overflow: hidden;
++  width: 100%;
+ }
+ 
+ #progress-bar {
+-  width: 0%;
++  background: linear-gradient(90deg, var(--accent), var(--success));
+   height: 100%;
+-  background: linear-gradient(90deg, var(--accent), var(--ok));
+-  transition: width .25s ease;
++  transition: width 0.25s ease;
++  width: 0%;
+ }
+ 
+ .details {
+   display: grid;
+-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+-  gap: .6rem;
+-  margin-top: .5rem;
++  gap: 0.7rem;
++  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
++  margin-top: 0.5rem;
+ }
+ 
+ .detail {
+-  background: rgba(15,23,42,.5);
++  background: var(--surface-soft);
+   border: 1px solid var(--border);
+-  border-radius: .8rem;
+-  padding: .65rem;
++  border-radius: 14px;
++  padding: 0.8rem;
++}
++
++.detail b {
++  color: var(--muted);
++  display: block;
++  font-size: 0.76rem;
++  letter-spacing: 0.08em;
++  margin-bottom: 0.28rem;
++  text-transform: uppercase;
+ }
+-.detail b { display: block; margin-bottom: .25rem; }
+ 
+ .downloads {
+   display: flex;
+-  gap: .7rem;
+   flex-wrap: wrap;
++  gap: 0.7rem;
+   margin-top: 1rem;
+ }
+ 
+ .errors {
+-  margin-top: 1rem;
+   color: var(--danger);
++  margin-top: 1rem;
+   white-space: pre-wrap;
+ }
+ 
++.recent a {
++  color: var(--accent);
++  font-weight: 800;
++  text-decoration: none;
++}
++
++.recent a:hover {
++  text-decoration: underline;
++}
++
++.job-row small {
++  color: var(--muted);
++  display: block;
++  font-size: 0.84rem;
++  font-weight: 500;
++  margin-top: 0.2rem;
++}
++
++.job-row span:last-child {
++  flex: 0 0 auto;
++  white-space: nowrap;
++}
++
++.modal {
++  background: transparent;
++  border: 0;
++  padding: 0;
++  width: min(560px, calc(100vw - 2rem));
++}
++
++.modal::backdrop {
++  background: rgba(15, 23, 42, 0.45);
++  backdrop-filter: blur(3px);
++}
++
++.modal-card {
++  background: #ffffff;
++  border: 1px solid var(--border);
++  border-radius: 22px;
++  box-shadow: 0 30px 90px rgba(15, 23, 42, 0.28);
++  overflow: hidden;
++}
++
++.modal-header,
++.modal-body,
++.modal-actions {
++  padding: 1.1rem;
++}
++
++.modal-header {
++  border-bottom: 1px solid var(--border);
++  gap: 1rem;
++  justify-content: space-between;
++}
++
++.modal-body {
++  display: grid;
++  gap: 1rem;
++}
++
++.modal-actions {
++  background: var(--surface-soft);
++  border-top: 1px solid var(--border);
++  justify-content: flex-end;
++}
++
++.icon-button {
++  background: var(--surface-soft);
++  border: 1px solid var(--border);
++  color: var(--text);
++  font-size: 1.35rem;
++  font-weight: 700;
++  height: 2.35rem;
++  min-height: auto;
++  padding: 0;
++  width: 2.35rem;
++}
++
++.switch-row {
++  align-items: flex-start;
++  background: var(--surface-soft);
++  border: 1px solid var(--border);
++  border-radius: 14px;
++  display: flex;
++  gap: 0.75rem;
++  padding: 0.9rem;
++}
++
++.switch-row input {
++  accent-color: var(--accent);
++  height: 1.15rem;
++  margin-top: 0.2rem;
++  width: 1.15rem;
++}
++
++.switch-row strong,
++.switch-row small {
++  display: block;
++}
++
++.switch-row small {
++  line-height: 1.4;
++  margin-top: 0.25rem;
++}
++
++.help-steps {
++  grid-template-columns: repeat(3, minmax(0, 1fr));
++}
++
++.help-steps div {
++  background: var(--surface-soft);
++  border: 1px solid var(--border);
++  border-radius: 16px;
++  padding: 0.9rem;
++}
++
++.help-steps strong {
++  display: block;
++  margin-bottom: 0.35rem;
++}
++
+ .hidden { display: none; }
+-code { color: var(--accent-2); }
++
++code {
++  background: var(--surface-soft);
++  border: 1px solid var(--border);
++  border-radius: 6px;
++  color: var(--accent-dark);
++  padding: 0.08rem 0.25rem;
++}
++
++@media (max-width: 980px) {
++  .workspace {
++    grid-template-columns: 1fr;
++  }
++
++  .side-panel {
++    position: static;
++  }
++
++  .setup-list {
++    grid-template-columns: repeat(2, minmax(0, 1fr));
++  }
++}
+ 
+ @media (max-width: 760px) {
+-  .grid.two { grid-template-columns: 1fr; }
+-  .hero, .status-head { flex-direction: column; }
++  .shell {
++    width: min(100% - 1rem, 1180px);
++    padding-top: 0.75rem;
++  }
++
++  .topbar,
++  .hero,
++  .card-header,
++  .split-heading,
++  .submit-strip {
++    align-items: stretch;
++    flex-direction: column;
++  }
++
++  .hero-card {
++    max-width: none;
++  }
++
++  .choice-grid,
++  .settings-grid,
++  .setup-list,
++  .help-steps {
++    grid-template-columns: 1fr;
++  }
++
++  .step-panel {
++    grid-template-columns: 1fr;
++  }
++
++  .step-number {
++    height: 2rem;
++    width: 2rem;
++  }
++
++  .summary-chip,
++  .badge {
++    white-space: normal;
++  }
+ }
+diff --git a/docker-compose.yml b/docker-compose.yml
+index a6c255a..e2e28c1 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -1,7 +1,7 @@
+ services:
+-  story-narrator:
++  storycast:
+     build: .
+-    container_name: story-narrator
++    container_name: storycast
+     ports:
+       - "127.0.0.1:8080:8080"
+     volumes:
