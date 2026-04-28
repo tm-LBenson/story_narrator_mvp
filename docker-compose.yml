@@ -1,11 +1,9 @@
 services:
   storycast:
-    build: .
+    image: gdunn03/storycast:latest
     container_name: storycast
-    ports:
-      - "127.0.0.1:8080:8080"
     volumes:
-      - ./data:/data
+      - storycast_data:/data
     environment:
       DATA_DIR: /data
       DEFAULT_VOICE: en-US-AriaNeural
@@ -14,3 +12,13 @@ services:
       MAX_CHARS_PER_CHUNK: 4500
       MAX_CONCURRENT_JOBS: 1
     restart: unless-stopped
+    networks:
+      np_proxy:
+        ipv4_address: 192.168.89.7
+
+volumes:
+  storycast_data:
+
+networks:
+  np_proxy:
+    external: true
