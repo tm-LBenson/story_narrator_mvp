@@ -1,6 +1,6 @@
 services:
   storycast:
-    image: gdunn03/storycast:latest
+    build: .
     container_name: storycast
     volumes:
       - storycast_data:/data
