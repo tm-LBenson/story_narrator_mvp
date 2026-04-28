@@ -2,6 +2,8 @@ services:
   storycast:
     build: .
     container_name: storycast
+    ports:
+      - "6500:8080"
     volumes:
       - storycast_data:/data
     environment:
