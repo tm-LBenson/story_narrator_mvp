@@ -13,12 +13,12 @@ services:
       MAX_CONCURRENT_JOBS: 1
     restart: unless-stopped
     networks:
-      np_proxy:
+      npm_proxy:
         ipv4_address: 192.168.89.7
 
 volumes:
   storycast_data:
 
 networks:
-  np_proxy:
+  npm_proxy:
     external: true
